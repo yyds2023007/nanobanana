@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>高清图片生成器（GEMINI3 PRO）</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", Arial; margin: 0; background:#0b0f17; color:#e8eefc; }
+    header { padding: 18px 16px; border-bottom: 1px solid #1d2a44; background:#0b0f17; position: sticky; top:0; }
+    .container { max-width: 980px; margin: 0 auto; padding: 16px; }
+    .card { background:#0f1726; border:1px solid #1d2a44; border-radius: 12px; padding: 14px; margin: 12px 0; }
+    .row { display:flex; gap:12px; flex-wrap: wrap; }
+    .col { flex: 1 1 320px; }
+    label { display:block; margin: 10px 0 6px; color:#b8c7f1; font-size: 14px; }
+    input[type="text"], input[type="password"], textarea, select {
+      width:100%; box-sizing:border-box; padding:10px 12px; border-radius:10px;
+      border:1px solid #2a3c63; background:#0b1220; color:#e8eefc;
+    }
+    textarea { min-height: 120px; resize: vertical; }
+    button {
+      padding: 10px 14px; border-radius: 10px; border: 1px solid #2a3c63;
+      background:#1a2a4a; color:#e8eefc; cursor:pointer;
+    }
+    button:disabled { opacity: .6; cursor:not-allowed; }
+    .hint { color:#94a7d6; font-size: 13px; line-height:1.5; }
+    .result img { max-width: 100%; border-radius: 12px; border:1px solid #1d2a44; }
+    .badge { display:inline-block; padding:4px 10px; border-radius:999px; border:1px solid #2a3c63; color:#b8c7f1; font-size: 12px; }
+    .err { color:#ffb4b4; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <div class="row" style="align-items:center; justify-content:space-between;">
+        <div>
+          <div style="font-size:18px; font-weight:650;">高清图片生成器</div>
+          <div class="hint">一、显示模型：<span class="badge">GEMINI3 PRO（gemini-3-pro-image-preview）</span></div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="card">
+      <div style="font-weight:650; margin-bottom:8px;">二、设置栏（必须提交 API 才能生成图片）</div>
+      <label>Gemini API Key</label>
+      <input id="apiKey" type="password" placeholder="粘贴你的 API Key（仅用于本次请求）" />
+      <div class="hint">匿名可用（不登录）；但必须填写自己的 API Key 才会向 Gemini 发起调用。</div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:650; margin-bottom:8px;">生成参数</div>
+
+      <label>1. 上传图片（可选，1-10 张参考图）</label>
+      <input id="images" type="file" accept="image/*" multiple />
+
+      <label>2. 输入提示词（支持中文提示词）</label>
+      <textarea id="prompt" placeholder="例如：写实风格，一只橘猫坐在窗边，阳光穿过纱帘，细节清晰，高清。"></textarea>
+
+      <label>最后：生成图片指示</label>
+      <div class="row">
+        <div class="col" style="display:flex; align-items:flex-end; gap:10px;">
+          <button id="btn">生成高清图片</button>
+          <button id="btnClear" type="button">清空</button>
+        </div>
+      </div>
+
+      <div id="status" class="hint" style="margin-top:10px;"></div>
+      <div id="error" class="err" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="card result">
+      <div style="font-weight:650; margin-bottom:8px;">生成结果</div>
+      <div id="out"></div>
+    </div>
+  </div>
+
+<script>
+  const apiKeyEl = document.getElementById('apiKey');
+  const imagesEl = document.getElementById('images');
+  const promptEl = document.getElementById('prompt');
+  const btn = document.getElementById('btn');
+  const btnClear = document.getElementById('btnClear');
+  const statusEl = document.getElementById('status');
+  const errEl = document.getElementById('error');
+  const outEl = document.getElementById('out');
+
+  function setBusy(b) {
+    btn.disabled = b;
+    statusEl.textContent = b ? '正在生成中，请稍候…' : '';
+  }
+
+  btnClear.addEventListener('click', () => {
+    apiKeyEl.value = '';
+    imagesEl.value = '';
+    promptEl.value = '';
+    errEl.textContent = '';
+    outEl.innerHTML = '';
+    statusEl.textContent = '';
+  });
+
+  btn.addEventListener('click', async () => {
+    errEl.textContent = '';
+    outEl.innerHTML = '';
+
+    const apiKey = apiKeyEl.value.trim();
+    const prompt = promptEl.value.trim();
+    const files = [...imagesEl.files || []];
+
+    if (!apiKey) { errEl.textContent = '请填写 API Key。'; return; }
+    if (!prompt) { errEl.textContent = '请填写提示词。'; return; }
+    if (files.length > 10) { errEl.textContent = '参考图最多 10 张。'; return; }
+
+    const fd = new FormData();
+    fd.append('apiKey', apiKey);
+    fd.append('prompt', prompt);
+    for (const f of files) fd.append('images', f);
+
+    setBusy(true);
+    try {
+      const resp = await fetch('/api/generate', { method:'POST', body: fd });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data.ok) {
+        errEl.textContent = (data && (data.error || data.detail)) ? JSON.stringify(data, null, 2) : '生成失败';
+        return;
+      }
+      const imgUrl = `data:${data.mimeType};base64,${data.imageBase64}`;
+      const a = document.createElement('a');
+      a.href = imgUrl;
+      a.download = 'gemini_image.png';
+      a.textContent = '下载图片';
+      a.style.display = 'inline-block';
+      a.style.margin = '8px 0 12px';
+
+      const img = document.createElement('img');
+      img.src = imgUrl;
+
+      outEl.appendChild(a);
+      outEl.appendChild(document.createElement('div')).appendChild(img);
+    } catch (e) {
+      errEl.textContent = String(e);
+    } finally {
+      setBusy(false);
+    }
+  });
+</script>
+</body>
+</html>
